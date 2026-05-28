@@ -1,0 +1,2 @@
+package slottedaloha;
+@namespace(slottedaloha);
