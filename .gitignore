@@ -1,0 +1,53 @@
+# ============================================================
+#  .gitignore  –  SlottedAlohaSimulation (OMNeT++ 6 / C++)
+# ============================================================
+
+# ── Build output (OMNeT++) ────────────────────────────────
+out/
+*.o
+*.a
+*.so
+*.d
+
+# ── Compiled binaries ─────────────────────────────────────
+SlottedAlohaSimulation
+SlottedAlohaSimulation.exe
+SlottedAlohaSimulation_dbg
+SlottedAlohaSimulation_dbg.exe
+
+# ── Simulation results ────────────────────────────────────
+results/
+
+# ── OMNeT++ IDE metadata (Eclipse-based) ─────────────────
+# Keep: .project, .cproject, .oppbuildspec  (needed to import project)
+# Ignore: user-specific workspace prefs
+.settings/
+.qtenvrc
+
+# ── Eventlog & vector files ───────────────────────────────
+*.elog
+*.vci
+*.vec
+
+# ── Python artefacts ─────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# ── Plot output images ────────────────────────────────────
+*.png
+*.pdf
+*.svg
+graphs/
+screenshots/
+
+# ── OS / editor junk ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

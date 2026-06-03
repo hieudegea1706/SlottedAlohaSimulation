@@ -1,8 +1,17 @@
 /*
- * Host.cc
+ * Host.cc  –  Slotted ALOHA: Poisson arrival model
  *
- *  Created on: May 26, 2026
- *      Author: HIEU
+ * Mỗi host phát sinh gói theo tiến trình Poisson với tốc độ λ_host = 1/iaTime.
+ * Gói phát sinh tại thời điểm bất kỳ trong slot nhưng được gửi vào đầu slot
+ * tiếp theo (slot-boundary alignment) đúng chuẩn Slotted ALOHA.
+ *
+ * Công thức tải:
+ *   T        = pkLenBits / txRate  = 960 / 9600 = 0.1 s
+ *   G_total  = numHosts × (T / iaTime)
+ *
+ *   LightLoad:  iaTime=20s  → G = 20 × (0.1/20)  = 0.1
+ *   MediumLoad: iaTime=2s   → G = 20 × (0.1/2)   = 1.0
+ *   HighLoad:   iaTime=0.5s → G = 20 × (0.1/0.5) = 4.0
  */
 #include <omnetpp.h>
 
@@ -13,11 +22,17 @@ namespace slottedaloha {
 class Host : public cSimpleModule
 {
   private:
-    cMessage *slotEvent = nullptr;
-    double sendProbability;
-    int packetLength;
-    simtime_t slotTime;
+    // Tham số Poisson
+    double    iaTime;           // inter-arrival time trung bình (s)
+    int       pkLenBits;        // kích thước gói (bit)
+    double    txRate;           // tốc độ kênh (bps)
+    simtime_t slotTime;         // T = pkLenBits / txRate (s) — tính trong initialize()
 
+    // Sự kiện nội bộ
+    cMessage *arrivalEvent = nullptr;   // "gói Poisson mới đến"
+    cMessage *sendEvent    = nullptr;   // "gửi vào đầu slot tiếp theo"
+
+    // Thống kê
     long generatedPackets = 0;
 
   protected:
@@ -29,49 +44,68 @@ class Host : public cSimpleModule
 
 Define_Module(Host);
 
+// ---------------------------------------------------------------
 void Host::initialize()
 {
-    sendProbability = par("sendProbability");
-    packetLength = par("packetLength");
-    slotTime = par("slotTime");
+    iaTime    = par("iaTime").doubleValue();    // đơn vị: s
+    pkLenBits = par("pkLenBits");               // đơn vị: bit
+    txRate    = par("txRate").doubleValue();    // đơn vị: bps
 
-    slotEvent = new cMessage("slotEvent");
+    // slotTime = T = L / R
+    slotTime  = pkLenBits / txRate;             // = 960 / 9600 = 0.1 s
 
-    // Mỗi host bắt đầu đúng tại biên slot
-    scheduleAt(simTime() + uniform(0, slotTime.dbl()), slotEvent);
+    arrivalEvent = new cMessage("arrivalEvent");
+    sendEvent    = new cMessage("sendEvent");
+
+    // Lịch gói đầu tiên — offset ngẫu nhiên tránh tất cả host bắt đầu cùng lúc
+    scheduleAt(simTime() + exponential(iaTime), arrivalEvent);
 }
 
+// ---------------------------------------------------------------
 void Host::handleMessage(cMessage *msg)
 {
-    if (msg == slotEvent)
+    if (msg == arrivalEvent)
     {
-        if (uniform(0, 1) < sendProbability)
-        {
-            cPacket *pkt = new cPacket("data");
-            pkt->setBitLength(packetLength);
-            send(pkt, "out");
-            generatedPackets++;
-        }
+        // ---- Gói Poisson mới đến ----
+        // Căn chỉnh về đầu slot tiếp theo
+        simtime_t now          = simTime();
+        long      slotIndex    = (long)(now.dbl() / slotTime.dbl());  // số slot nguyên
+        simtime_t nextSlotTime = SimTime((slotIndex + 1) * slotTime.dbl());
 
-        scheduleAt(simTime() + slotTime, slotEvent);
+        // Lịch sự kiện gửi vào đầu slot tiếp theo
+        // (nếu sendEvent đã được lịch → hủy để tránh trùng)
+        if (sendEvent->isScheduled())
+            cancelEvent(sendEvent);
+        scheduleAt(nextSlotTime, sendEvent);
+
+        // Lịch gói Poisson tiếp theo
+        scheduleAt(now + exponential(iaTime), arrivalEvent);
+    }
+    else if (msg == sendEvent)
+    {
+        // ---- Gửi gói vào đầu slot ----
+        cPacket *pkt = new cPacket("data");
+        pkt->setBitLength(pkLenBits);
+        send(pkt, "out");
+        generatedPackets++;
     }
     else
     {
-        delete msg;
+        delete msg;  // tin hiệu từ channel (ACK tượng trưng) — bỏ qua
     }
 }
 
+// ---------------------------------------------------------------
 void Host::finish()
 {
     recordScalar("generatedPackets", generatedPackets);
 }
 
+// ---------------------------------------------------------------
 Host::~Host()
 {
-    cancelAndDelete(slotEvent);
+    cancelAndDelete(arrivalEvent);
+    cancelAndDelete(sendEvent);
 }
 
-}
-
-
-
+} // namespace slottedaloha
