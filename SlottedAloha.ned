@@ -1,67 +1,40 @@
 package slottedaloha;
 
-// ============================================================
-//  Host: phát sinh gói theo tiến trình Poisson
-//        iaTime = exponential(mean) → G = numHosts * T / mean
-// ============================================================
-simple Host
+// ===========================================================
+//  SlottedAloha  –  Mạng mô phỏng Slotted ALOHA (12 kịch bản)
+//
+//  Kiến trúc:
+//    - server: Server  (bộ thu trung tâm, đặt tại tọa độ 500, 500)
+//    - host[numHosts]: Host  (các trạm phân bố ngẫu nhiên trên 1000×1000 m)
+//    - Kết nối: Host dùng sendDirect() → không cần kết nối tường minh
+//
+//  Nền địa hình: background/terrain (từ thư viện icon OMNeT++)
+// ===========================================================
+network SlottedAloha
 {
     parameters:
-        double iaTime @unit(s);        // inter-arrival time trung bình (Poisson)
-        int pkLenBits @unit(bit);   // kích thước gói = 960 bit
-        double txRate @unit(bps);   // tốc độ kênh   = 9600 bps
-        @display("i=device/pc");
-    gates:
-        output out;
-        input in;
-}
+        int    numHosts  = default(20);
+        int    pkLenBits @unit(bit) = default(960bit);
+        double txRate    @unit(bps) = default(9600bps);
 
-// ============================================================
-//  Channel: kênh dùng chung, phân slot, phát hiện va chạm
-// ============================================================
-simple Channel
-{
-    parameters:
-        int numHosts;
-        int pkLenBits @unit(bit);
-        double txRate @unit(bps);
-        @display("i=block/switch");
-    gates:
-        input in[numHosts];
-        output out[numHosts];
-}
+        @display("bgi=background/terrain,s;bgb=1000,1000");
 
-// ============================================================
-//  Network
-// ============================================================
-network SlottedAlohaNetwork
-{
-    parameters:
-        int numHosts = default(20);
-        int pkLenBits @unit(bit) = default(960bit);
-        double txRate @unit(bps) = default(9600bps);
-
-        @display("bgb=347,234");
     submodules:
-        host[numHosts]: Host {
-            parameters:
-                pkLenBits = parent.pkLenBits;
-                txRate = parent.txRate;
-                // iaTime được đặt trong omnetpp.ini cho từng kịch bản
-                @display("p=88,100");
+        server: Server {
+            numHosts  = parent.numHosts;
+            pkLenBits = parent.pkLenBits;
+            txRate    = parent.txRate;
+            @display("p=500,500");
         }
 
-        medium: Channel {
-            parameters:
-                numHosts = parent.numHosts;
-                pkLenBits = parent.pkLenBits;
-                txRate = parent.txRate;
-                @display("p=220,100");
+        host[numHosts]: Host {
+            txRate    = parent.txRate;
+            pkLenBits = parent.pkLenBits;
+            // x, y được đặt trong omnetpp.ini: uniform(0m, 1000m)
+            // Vị trí trên canvas được cập nhật bởi Host::initialize()
         }
 
     connections allowunconnected:
-        for i=0..numHosts-1 {
-            host[i].out --> medium.in[i];
-            medium.out[i] --> host[i].in;
-        }
+        // Host sử dụng sendDirect() để gửi gói trực tiếp tới server.gate("in")
+        // Không cần kết nối tường minh giữa Host và Server.
 }
