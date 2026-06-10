@@ -1,6 +1,6 @@
 # Slotted ALOHA Simulation
 
-Mô phỏng giao thức **Slotted ALOHA** bằng **OMNeT++ 6.4.0**, đánh giá hiệu quả sử dụng kênh truyền dưới 12 kịch bản tải khác nhau theo phương pháp *ceteris paribus*.
+Mô phỏng giao thức **Slotted ALOHA** bằng **OMNeT++ 6.4.0**, đánh giá hiệu quả sử dụng kênh truyền qua **4 phase sweep** (40 runs) theo phương pháp *ceteris paribus*. Mỗi phase quét 10 giá trị của một tham số duy nhất bằng cú pháp `${...}` của OMNeT++.
 
 ---
 
@@ -12,7 +12,7 @@ Mô phỏng giao thức **Slotted ALOHA** bằng **OMNeT++ 6.4.0**, đánh giá 
 4. [Mô Hình Mô Phỏng](#4-mô-hình-mô-phỏng)
 5. [Cài Đặt & Build](#5-cài-đặt--build)
 6. [Chạy Mô Phỏng](#6-chạy-mô-phỏng)
-7. [Thiết Kế Thực Nghiệm — 12 Kịch Bản](#7-thiết-kế-thực-nghiệm--12-kịch-bản)
+7. [Thiết Kế Thực Nghiệm — 4 Phase Sweep](#7-thiết-kế-thực-nghiệm--4-phase-sweep)
 8. [Kết Quả Mong Đợi](#8-kết-quả-mong-đợi)
 9. [Vẽ Đồ Thị](#9-vẽ-đồ-thị)
 10. [Kiểm Tra Tính Đúng Đắn](#10-kiểm-tra-tính-đúng-đắn)
@@ -36,12 +36,12 @@ Mô phỏng giao thức **Slotted ALOHA** bằng **OMNeT++ 6.4.0**, đánh giá 
 ```
 SlottedAlohaSimulation/
 │
-├── Host.cc              # Logic mỗi trạm: Poisson arrivals, gửi gói
-├── Channel.cc           # Kênh dùng chung: phân slot, phát hiện collision
-├── SlottedAloha.ned     # Topology mạng (NED)
+├── Host.ned / Host.h / Host.cc       # Module trạm (OOP, sendDirect)
+├── Server.ned / Server.h / Server.cc # Module bộ thu trung tâm (OOP, @directIn)
+├── SlottedAloha.ned     # Topology mạng (Network)
 ├── package.ned          # Khai báo package slottedaloha
 │
-├── omnetpp.ini          # 12 kịch bản mô phỏng (4 phase)
+├── omnetpp.ini          # 4 phase sweep (40 runs)
 ├── plot_results.py      # Script Python vẽ đồ thị kết quả
 │
 ├── Makefile             # Build script (tự động bởi OMNeT++)
@@ -88,19 +88,21 @@ G (Offered Load)= λ_total × T = N × T / iaTime [gói/slot]
 
 ## 4. Mô Hình Mô Phỏng
 
-### Kiến trúc
+### Kiến trúc (OOP — sendDirect)
 
 ```
-omnetpp.ini          Host.cc                    Channel.cc
-───────────          ──────────────────         ──────────────────────
-iaTime = 2s    →     arrivalEvent               endSlotEvent (mỗi T giây)
-                     (Poisson timer)                    │
-                            │                   ┌───────┴──────────┐
-                     sendEvent              n=0 │ Idle slot         │
-                     (next slot boundary)  n=1 │ Success slot  ✓   │
-                            │              n≥2 │ Collision slot ✗  │
-                     send(pkt, "out") ─────────►       │
-                                                recordScalar(G,S,CR,IR)
+omnetpp.ini          Host.cc                       Server.cc
+───────────          ────────────────────────      ──────────────────────────
+iaTime = 2s    →     exponential(iaTime_mean)      endSlotEvent (mỗi T giây)
+                            │                              │
+                     getNextTransmissionTime()      ┌───────┴──────────┐
+                     = ceil(t / slotTime)       n=0 │ Idle slot         │
+                            │                  n=1 │ Success slot  ✓   │
+                            │                  n≥2 │ Collision slot ✗  │
+                     sendDirect(pk,                │                   │
+                       radioDelay,  ───────────────►       │
+                       duration,                    recordScalar(G,S,CR,IR)
+                       server→gate("in"))           refreshDisplay() (màu icon)
 ```
 
 ### Tham số cơ sở (Baseline)
@@ -128,6 +130,55 @@ iaTime = 2s    →     arrivalEvent               endSlotEvent (mỗi T giây)
 | `successRatio` | Tỉ lệ gói thành công / tổng gói gửi |
 | `throughput_theory` | S = G·e^(-G) tính từ G đo được |
 | `cfg_*` | Tham số cấu hình (để Python phân nhóm) |
+
+### Lý Do Chọn Bộ Tham Số Cơ Sở
+
+#### 1. Tại sao N=20, L=960 bit, R=9600 bps?
+
+Ba tham số này không phải tùy ý — chúng được chọn để tạo ra một **điểm vận hành tối ưu sạch** khi `iaTime = 2s`:
+
+```
+T = L/R = 960 / 9600 = 0.1 s   (số tròn, dễ kiểm tra)
+G = N × T / iaTime = 20 × 0.1 / 2 = 1.0   ← chính xác G_optimal
+S = G · e^(-G) = 1 · e^(-1) ≈ 0.368       ← S_max = 1/e
+```
+
+Lợi ích: khi bắt đầu từ `G=1.0`, ta có thể tăng/giảm từng tham số một cách đối xứng để khám phá toàn bộ đường cong hiệu năng mà không cần thay đổi baseline code.
+
+#### 2. Tại sao sim-time-limit = 3600s?
+
+```
+3600 s ÷ 0.1 s/slot = 36 000 slot
+```
+
+Với 36 000 slot, sai số thống kê Monte Carlo thỏa mãn:
+
+```
+σ / μ ≈ 1 / √36000 ≈ 0.5%
+```
+
+Sai số này nhỏ hơn 1%, đủ để so sánh với lý thuyết mà không cần chạy lại nhiều lần (no repetition needed).
+
+#### 3. Tại sao `SAMPLE_DATA` trong `plot_results.py` có giá trị đó?
+
+`SAMPLE_DATA` được **sinh tự động** từ hàm `_generate_sample_data()` trong script. Hàm này lấy 10 giá trị sweep của mỗi phase, tính G từ công thức mapping (`param_to_G`), rồi áp dụng 4 công thức đóng (*closed-form*):
+
+| Chỉ số | Công thức | Nguồn gốc |
+|--------|-----------|-----------|
+| `S`  | $G \cdot e^{-G}$ | Xác suất đúng 1 gói trong Poisson($G$) |
+| `IR` | $e^{-G}$ | Xác suất 0 gói (slot rảnh) |
+| `CR` | $1-(1+G)\cdot e^{-G}$ | Xác suất ≥2 gói (bổ sung) |
+| `SR` | $e^{-G}$ | Xác suất thành công mỗi lượt gửi = S/G |
+
+Kiểm chứng nhanh (bất biến bắt buộc):
+
+```
+S + CR + IR = Ge^{-G} + [1-(1+G)e^{-G}] + e^{-G} = 1.0  ✓ (mọi G)
+```
+
+Bộ dữ liệu này phục vụ hai mục đích:
+- **Fallback hoàn chỉnh**: xem đồ thị lý thuyết ngay cả khi chưa chạy mô phỏng.
+- **Bổ sung từng phần**: nếu chỉ chạy một số config, các config còn thiếu được điền bằng giá trị lý thuyết.
 
 ---
 
@@ -165,61 +216,60 @@ make MODE=release
 
 1. Mở **Run → Run Configurations...**
 2. Tạo **OMNeT++ Simulation** → chọn `omnetpp.ini`
-3. Chọn **Config name** (ví dụ: `LightLoad`)
-4. Nhấn **Run**
+3. Chọn **Config name** (ví dụ: `Phase1_VaryIaTime`)
+4. Nhấn **Run** → OMNeT++ tự sinh 10 runs cho các giá trị sweep
 
 ### Từ terminal
 
 ```bash
-# Chạy một config
-./SlottedAlohaSimulation -u Cmdenv -c LightLoad omnetpp.ini
+# Chạy một phase (OMNeT++ tự chạy 10 giá trị sweep)
+./SlottedAlohaSimulation -u Cmdenv -c Phase1_VaryIaTime omnetpp.ini
 
-# Chạy tất cả 12 config nối tiếp
-for cfg in LightLoad MediumLoad HighLoad \
-           SmallPacket MediumPacket LargePacket \
-           FewHosts MediumHosts ManyHosts \
-           SlowChannel BaseChannel FastChannel; do
+# Chạy tất cả 4 phase nối tiếp (tổng 40 runs)
+for cfg in Phase1_VaryIaTime Phase2a_VaryPktLen \
+           Phase2b_VaryNumHosts Phase3_VaryTxRate; do
     echo "=== Running $cfg ==="
     ./SlottedAlohaSimulation -u Cmdenv -c $cfg omnetpp.ini
 done
 ```
 
-Kết quả lưu tại `results/<ConfigName>-#0.sca`.
+Kết quả lưu tại `results/<ConfigName>-<var>=<value>-#0.sca`.
 
 ---
 
-## 7. Thiết Kế Thực Nghiệm — 12 Kịch Bản
+## 7. Thiết Kế Thực Nghiệm — 4 Phase Sweep
 
-Phương pháp **ceteris paribus**: mỗi phase chỉ thay đổi **một tham số**, giữ nguyên các tham số còn lại.
+Phương pháp **sweep tham số** (`${...}` syntax): mỗi phase quét **10 giá trị** của một tham số, giữ nguyên các tham số còn lại. OMNeT++ tự sinh 10 runs cho mỗi config (tổng 40 runs).
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Phase 1 – Vary iaTime   (N=20, L=960b, R=9600bps, T=0.1s)    │
-│    LightLoad  : iaTime=20s   → G=0.1                           │
-│    MediumLoad : iaTime=2s    → G=1.0  ← ĐIỂM TỐI ƯU          │
-│    HighLoad   : iaTime=0.5s  → G=4.0                           │
-├─────────────────────────────────────────────────────────────────┤
-│  Phase 2a – Vary pkLenBits  (iaTime=2s, N=20, R=9600bps)      │
-│    SmallPacket  : L=480bit  → T=0.05s → G=0.5                 │
-│    MediumPacket : L=960bit  → T=0.1s  → G=1.0 (baseline)     │
-│    LargePacket  : L=1920bit → T=0.2s  → G=2.0                 │
-├─────────────────────────────────────────────────────────────────┤
-│  Phase 2b – Vary numHosts   (iaTime=2s, L=960b, R=9600bps)    │
-│    FewHosts    : N=5  → G=0.25                                 │
-│    MediumHosts : N=20 → G=1.0  (baseline)                     │
-│    ManyHosts   : N=40 → G=2.0                                  │
-├─────────────────────────────────────────────────────────────────┤
-│  Phase 3 – Vary txRate      (iaTime=2s, N=20, L=960bit)       │
-│    SlowChannel : R=4800bps  → T=0.2s  → G=2.0                 │
-│    BaseChannel : R=9600bps  → T=0.1s  → G=1.0 (baseline)     │
-│    FastChannel : R=19200bps → T=0.05s → G=0.5                 │
-└─────────────────────────────────────────────────────────────────┘
+```ini
+# Ví dụ: Phase 1 quét 10 giá trị iaTime trong 1 config duy nhất
+[Config Phase1_VaryIaTime]
+*.host[*].iaTime = ${ia=0.25, 0.4, 0.5, 0.667, 1, 1.333, 2, 4, 10, 20}s
+# → OMNeT++ tự sinh 10 runs: Phase1_VaryIaTime-ia=0.25-#0.sca, ...
 ```
 
-### Câu hỏi nghiên cứu của từng phase
+### Tổng quan 4 Phase
 
-| Phase | Biến thiên | Câu hỏi nghiên cứu |
-|-------|-----------|---------------------|
+| Config | Tham số sweep | 10 giá trị | Dải G |
+|--------|--------------|------------|-------|
+| `Phase1_VaryIaTime` | iaTime (s) | 0.25, 0.4, 0.5, 0.667, 1, 1.333, 2, 4, 10, 20 | 8.0 → 0.1 |
+| `Phase2a_VaryPktLen` | L (bit) | 240, 480, 640, 960, 1440, 1920, 2880, 3840, 4800, 5760 | 0.25 → 6.0 |
+| `Phase2b_VaryNumHosts` | N | 2, 5, 10, 15, 20, 30, 40, 60, 80, 100 | 0.1 → 5.0 |
+| `Phase3_VaryTxRate` | R (bps) | 1920, 2400, 3200, 4800, 6400, 9600, 14400, 19200, 38400, 48000 | 5.0 → 0.2 |
+
+### Công thức G cho mỗi Phase
+
+| Phase | Tham số cố định | Công thức G |
+|-------|-----------------|-------------|
+| **1** | N=20, L=960b, R=9600bps | G = 2 / iaTime |
+| **2a** | iaTime=2s, N=20, R=9600bps | G = L / 960 |
+| **2b** | iaTime=2s, L=960b, R=9600bps | G = N / 20 |
+| **3** | iaTime=2s, N=20, L=960b | G = 9600 / R |
+
+### Câu hỏi nghiên cứu
+
+| Phase | Biến thiên | Câu hỏi |
+|-------|-----------|---------|
 | **1** | iaTime (tần suất gửi) | G nào cho throughput tối ưu? |
 | **2a** | pkLenBits (kích thước gói) | Gói lớn hơn ảnh hưởng thế nào đến tải kênh? |
 | **2b** | numHosts (số trạm) | Mạng đông hơn ảnh hưởng thế nào khi cùng tần suất gửi? |
@@ -229,40 +279,69 @@ Phương pháp **ceteris paribus**: mỗi phase chỉ thay đổi **một tham s
 
 ## 8. Kết Quả Mong Đợi
 
-### Phase 1 — Tìm điểm tối ưu
+Mỗi phase cho ra 10 data points. Tất cả đều phải nằm trên đường cong lý thuyết S = G·e⁻ᴳ. Điểm tối ưu chung: **G = 1.0 → S_max = 1/e ≈ 0.368**.
 
-| Config | iaTime | G | S = G·e⁻ᴳ | Idle Rate | Collision Rate |
-|--------|--------|---|-----------|-----------|----------------|
-| LightLoad | 20 s | 0.10 | 0.090 | 90.5% | 0.5% |
-| **MediumLoad** | **2 s** | **1.00** | **0.368** | **36.8%** | **26.4%** |
-| HighLoad | 0.5 s | 4.00 | 0.073 | 1.8% | 90.8% |
+### Phase 1 — Sweep iaTime (G = 2/iaTime)
 
-### Phase 2a — Ảnh hưởng kích thước gói (iaTime=2s, N=20)
+| iaTime (s) | G | S | CR | IR |
+|---|---|---|---|---|
+| 0.25 | 8.000 | 0.003 | 0.997 | 0.000 |
+| 0.4 | 5.000 | 0.034 | 0.960 | 0.007 |
+| 0.5 | 4.000 | 0.073 | 0.908 | 0.018 |
+| 0.667 | 2.999 | 0.149 | 0.801 | 0.050 |
+| 1.0 | 2.000 | 0.271 | 0.594 | 0.135 |
+| 1.333 | 1.500 | 0.335 | 0.442 | 0.223 |
+| **2.0** | **1.000** | **0.368** | **0.264** | **0.368** |
+| 4.0 | 0.500 | 0.303 | 0.090 | 0.607 |
+| 10.0 | 0.200 | 0.164 | 0.017 | 0.819 |
+| 20.0 | 0.100 | 0.090 | 0.005 | 0.905 |
 
-| Config | L | T | G | S |
-|--------|---|---|---|---|
-| SmallPacket | 480 bit | 0.05 s | 0.5 | 0.303 |
-| MediumPacket | 960 bit | 0.1 s | 1.0 | 0.368 |
-| LargePacket | 1920 bit | 0.2 s | 2.0 | 0.271 |
+### Phase 2a — Sweep pkLenBits (G = L/960)
 
-### Phase 2b — Ảnh hưởng số trạm (iaTime=2s, L=960b)
+| L (bit) | G | S | CR | IR |
+|---|---|---|---|---|
+| 240 | 0.250 | 0.195 | 0.027 | 0.779 |
+| 480 | 0.500 | 0.303 | 0.090 | 0.607 |
+| 640 | 0.667 | 0.342 | 0.145 | 0.513 |
+| **960** | **1.000** | **0.368** | **0.264** | **0.368** |
+| 1440 | 1.500 | 0.335 | 0.442 | 0.223 |
+| 1920 | 2.000 | 0.271 | 0.594 | 0.135 |
+| 2880 | 3.000 | 0.149 | 0.801 | 0.050 |
+| 3840 | 4.000 | 0.073 | 0.908 | 0.018 |
+| 4800 | 5.000 | 0.034 | 0.960 | 0.007 |
+| 5760 | 6.000 | 0.015 | 0.983 | 0.002 |
 
-| Config | N | G | S |
-|--------|---|---|---|
-| FewHosts | 5 | 0.25 | 0.195 |
-| MediumHosts | 20 | 1.0 | 0.368 |
-| ManyHosts | 40 | 2.0 | 0.271 |
+### Phase 2b — Sweep numHosts (G = N/20)
 
-### Phase 3 — Ảnh hưởng băng thông (iaTime=2s, N=20, L=960b)
+| N | G | S | CR | IR |
+|---|---|---|---|---|
+| 2 | 0.100 | 0.090 | 0.005 | 0.905 |
+| 5 | 0.250 | 0.195 | 0.027 | 0.779 |
+| 10 | 0.500 | 0.303 | 0.090 | 0.607 |
+| 15 | 0.750 | 0.354 | 0.174 | 0.472 |
+| **20** | **1.000** | **0.368** | **0.264** | **0.368** |
+| 30 | 1.500 | 0.335 | 0.442 | 0.223 |
+| 40 | 2.000 | 0.271 | 0.594 | 0.135 |
+| 60 | 3.000 | 0.149 | 0.801 | 0.050 |
+| 80 | 4.000 | 0.073 | 0.908 | 0.018 |
+| 100 | 5.000 | 0.034 | 0.960 | 0.007 |
 
-| Config | R (bps) | T | G | S |
-|--------|---------|---|---|---|
-| SlowChannel | 4 800 | 0.2 s | 2.0 | 0.271 |
-| BaseChannel | 9 600 | 0.1 s | 1.0 | 0.368 |
-| FastChannel | 19 200 | 0.05 s | 0.5 | 0.303 |
+### Phase 3 — Sweep txRate (G = 9600/R)
 
-> **Kết luận Phase 3:** Tăng băng thông R↑ → T↓ → G↓ → throughput tốt hơn  
-> với **cùng lượng traffic** (iaTime không đổi). Đây là lý do tăng băng thông cải thiện hiệu năng mạng ALOHA.
+| R (bps) | G | S | CR | IR |
+|---|---|---|---|---|
+| 1920 | 5.000 | 0.034 | 0.960 | 0.007 |
+| 2400 | 4.000 | 0.073 | 0.908 | 0.018 |
+| 3200 | 3.000 | 0.149 | 0.801 | 0.050 |
+| 4800 | 2.000 | 0.271 | 0.594 | 0.135 |
+| 6400 | 1.500 | 0.335 | 0.442 | 0.223 |
+| **9600** | **1.000** | **0.368** | **0.264** | **0.368** |
+| 14400 | 0.667 | 0.342 | 0.145 | 0.513 |
+| 19200 | 0.500 | 0.303 | 0.090 | 0.607 |
+| 38400 | 0.250 | 0.195 | 0.027 | 0.779 |
+| 48000 | 0.200 | 0.164 | 0.017 | 0.819 |
+
+> **Kết luận Phase 3:** Tăng băng thông R↑ → T↓ → G↓ → throughput tốt hơn với **cùng lượng traffic** (iaTime không đổi).
 
 ---
 
@@ -280,18 +359,24 @@ pip install matplotlib numpy
 python3 plot_results.py
 ```
 
-Script tự động đọc tất cả file `.sca` trong `results/` và xuất **6 file PNG**:
+Script tự động đọc tất cả file `.sca` trong `results/` và xuất **5 file PNG**:
 
 | File | Nội dung |
 |------|---------|
-| `aloha_phase1_iaTime.png` | S, Collision Rate, Idle Rate vs G — Phase 1 |
-| `aloha_phase2a_pktsize.png` | S, Collision Rate, Idle Rate vs G — Phase 2a |
-| `aloha_phase2b_numhosts.png` | S, Collision Rate, Idle Rate vs G — Phase 2b |
-| `aloha_phase3_txrate.png` | S, Collision Rate, Idle Rate vs G — Phase 3 |
-| `aloha_summary_bar.png` | So sánh S_sim vs S_theory cho 12 config |
-| `aloha_phase3_insight.png` | T, G, S theo txRate — insight băng thông |
+| `aloha_phase1_iaTime.png` | S, CR, IR vs G — Phase 1 (10 điểm) |
+| `aloha_phase2a_pktsize.png` | S, CR, IR vs G — Phase 2a (10 điểm) |
+| `aloha_phase2b_numhosts.png` | S, CR, IR vs G — Phase 2b (10 điểm) |
+| `aloha_phase3_txrate.png` | S, CR, IR vs G — Phase 3 (10 điểm) |
+| `aloha_summary_overlay.png` | Tổng hợp 40 data points trên đường cong S = G·e⁻ᴳ |
 
-> Nếu chưa chạy mô phỏng, script tự dùng **dữ liệu mẫu lý thuyết** để demo đồ thị.
+### Quy ước đồ thị
+
+| Kiểu nét | Ý nghĩa |
+|----------|---------|
+| ── **Nét liền** + marker | Dữ liệu mô phỏng (scatter + đường nối) |
+| -- **Nét đứt** | Đường lý thuyết |
+
+> Nếu chưa chạy mô phỏng, script tự dùng **dữ liệu mẫu lý thuyết** (sinh tự động từ công thức) để demo đồ thị.
 
 ---
 
@@ -321,12 +406,13 @@ S + CR + IR = 1.0   (tổng 3 loại slot phải bằng tổng slot)
 
 | Lỗi | Nguyên nhân | Cách sửa |
 |-----|-------------|---------|
-| `Parameter 'iaTime' not found` | File `.ned` cũ chưa có `iaTime` | Build lại sau khi sửa `SlottedAloha.ned` |
+| `Parameter 'iaTime' not found` | File `.ned` cũ chưa có `iaTime` | Build lại sau khi sửa `Host.ned` |
 | `G_sim ≈ 2 × G_theory` | Dùng `exponential()` trong ini | Đổi thành hằng số: `iaTime = 20s` |
-| `SimTime × SimTime` compile error | Kiểu dữ liệu sai | Dùng `long slotIndex` thay vì `simtime_t` |
 | `slotTime = 0.001s` (sai) | Tham số cũ còn trong ini | `slotTime` tính tự động trong C++, xóa khỏi ini |
-| Plot rỗng / không có điểm | Chưa chạy đủ config | Chạy tất cả 12 config; script dùng sample data nếu thiếu |
+| Plot rỗng / không có điểm | Chưa chạy mô phỏng | Chạy 4 phase sweep; script dùng sample data nếu thiếu |
 | `G_sim = 0` | `sim-time-limit` quá ngắn | Tăng lên ≥ 1000s để có đủ slot thống kê |
+| `.sca` file không được nhận diện | iterationvars bị thiếu | Kiểm tra `attr configname` và `attr iterationvars` trong header .sca |
+| Tên config cũ không tìm thấy | Đang dùng config name cũ | Đổi sang: `Phase1_VaryIaTime`, `Phase2a_VaryPktLen`, ... |
 
 ---
 
