@@ -40,8 +40,6 @@ venv/
 *.png
 *.pdf
 *.svg
-graphs/
-screenshots/
 
 # ── OS / editor junk ─────────────────────────────────────
 .DS_Store
