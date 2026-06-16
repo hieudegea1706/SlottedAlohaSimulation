@@ -246,7 +246,8 @@ def set_projector_rcparams():
         'legend.facecolor': '#ffffff',
         'legend.edgecolor': '#aaaacc',
         'legend.framealpha': 0.95,
-        'font.family':      'DejaVu Sans',
+        "font.family": "serif",
+        # "font.serif": ['Computer Modern Roman'] + plt.rcParams['font.serif'],
         'font.size':        10,
         'axes.linewidth':   1.2,
     })
@@ -301,8 +302,8 @@ def plot_phase(phase_key, data, save=True):
 
     set_projector_rcparams()
     fig = plt.figure(figsize=(15, 5), facecolor=BG)
-    fig.suptitle(f'{ph["title"]}\n{ph["subtitle"]}',
-                 fontsize=13, fontweight='bold', color='#0d0d2e')
+    fig.suptitle(f'{ph["title"]} - {ph["subtitle"]}',
+                 fontsize=10, fontweight='bold', color='#0d0d2e')
 
     gs = gridspec.GridSpec(1, 3, figure=fig, wspace=0.38)
     axes = [fig.add_subplot(gs[0, i]) for i in range(3)]
