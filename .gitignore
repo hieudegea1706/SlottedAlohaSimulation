@@ -49,3 +49,9 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# Exception
+!graphs/
+!graphs/*
+!screenshots/
+!screenshots/*
