@@ -40,8 +40,6 @@ venv/
 *.png
 *.pdf
 *.svg
-graphs/
-screenshots/
 
 # ── OS / editor junk ─────────────────────────────────────
 .DS_Store
@@ -51,3 +49,9 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# Exception
+!graphs/
+!graphs/*
+!screenshots/
+!screenshots/*
